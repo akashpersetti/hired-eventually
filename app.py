@@ -232,6 +232,7 @@ def _build_interface() -> gr.Blocks:
     combined_css = APPLE_FONT_CSS + COVER_LETTER_BOX_CSS
     with gr.Blocks(
         title="Cover Letter Generator",
+        theme=gr.themes.Soft(),
         head=PAGE_HEAD,
         fill_height=True,
         css=combined_css,
@@ -381,5 +382,5 @@ app = _build_interface()
 
 
 if __name__ == "__main__":
-    app.launch(theme=gr.themes.Soft(), server_name="0.0.0.0")
+    app.launch(server_name="0.0.0.0")
 
