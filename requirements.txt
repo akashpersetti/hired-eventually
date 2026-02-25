@@ -1,0 +1,6 @@
+gradio>=5.22.0
+openai>=1.68.2
+openai-agents>=0.0.15
+anthropic>=0.49.0
+pypdf>=5.4.0
+python-dotenv>=1.0.1
