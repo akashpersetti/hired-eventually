@@ -275,7 +275,7 @@ def _build_interface() -> gr.Blocks:
             label="Model (required)",
             choices=[
                 "claude-sonnet-4-0",
-                "gpt-5.2",
+                "gpt-5-mini",
                 "gemini-3-flash-preview",
             ],
             value=None,
