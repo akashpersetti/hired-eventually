@@ -9,9 +9,6 @@ import gradio as gr
 
 from cover_letter import generate_cover_letter
 
-_APP_TOKEN = os.getenv("APP_TOKEN", "")
-
-
 def _sanitize_filename(name: str) -> str:
     """Replace spaces and invalid filesystem chars with underscore."""
     if not name or not name.strip():
@@ -52,15 +49,6 @@ def _extract_file_path(file_obj: Any) -> str | None:
     if isinstance(file_obj, dict) and "name" in file_obj:
         return str(file_obj["name"])
     return None
-
-
-def _on_token_change(token: str):
-    """Validate the access token and reveal the resume upload on success."""
-    if not _APP_TOKEN or token.strip() == _APP_TOKEN:
-        return gr.update(visible=True), gr.update(value="", visible=False)
-    if token.strip():
-        return gr.update(visible=False), gr.update(value="Invalid token.", visible=True)
-    return gr.update(visible=False), gr.update(value="", visible=False)
 
 
 def _on_resume_upload(file_obj) -> dict:
@@ -248,20 +236,12 @@ def _build_interface() -> gr.Blocks:
             """,
         )
 
-        token_input = gr.Textbox(
-            label="Access token",
-            placeholder="Enter your access token...",
-            type="password",
-            visible=bool(_APP_TOKEN),
-        )
-        token_status = gr.Markdown(value="", visible=False)
-
         resume_file = gr.File(
             label="Upload resume (PDF)",
             file_types=[".pdf"],
             file_count="single",
             interactive=True,
-            visible=not bool(_APP_TOKEN),
+            visible=True,
         )
 
         job_description = gr.Textbox(
@@ -323,12 +303,6 @@ def _build_interface() -> gr.Blocks:
         company_name_state = gr.State(value="")
 
         # Progressive disclosure: show next field when previous is filled
-        token_input.change(
-            fn=_on_token_change,
-            inputs=token_input,
-            outputs=[resume_file, token_status],
-        )
-
         resume_file.change(
             fn=_on_resume_upload,
             inputs=resume_file,
@@ -382,5 +356,5 @@ app = _build_interface()
 
 
 if __name__ == "__main__":
-    app.launch(server_name="0.0.0.0")
+    app.launch(server_name="0.0.0.0", auth=(os.getenv("APP_USERNAME"), os.getenv("APP_PASSWORD")))
 
