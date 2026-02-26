@@ -354,7 +354,9 @@ def _build_interface() -> gr.Blocks:
 
 app = _build_interface()
 
+_username = os.getenv("APP_USERNAME")
+_password = os.getenv("APP_PASSWORD")
+_auth = (_username, _password) if (_username and _password) else None
 
-if __name__ == "__main__":
-    app.launch(server_name="0.0.0.0", auth=(os.getenv("APP_USERNAME"), os.getenv("APP_PASSWORD")))
+app.launch(server_name="0.0.0.0", auth=_auth)
 
