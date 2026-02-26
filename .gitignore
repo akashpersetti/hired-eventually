@@ -11,3 +11,19 @@ wheels/
 
 # Environment variables
 .env
+
+# macOS
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Claude Code session data
+.claude/
+
+# Personal files — contain sensitive/private data
+resume.pdf
+job_apps.xlsx
+
+# Claude Code readme
+CLAUDE.md

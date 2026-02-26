@@ -20,9 +20,15 @@ load_dotenv(override=True)
 class CoverLetter(BaseModel):
     cover_letter: str = Field(description="The cover letter output")
     company_name: str = Field(description="The company name from the job description")
+    role_applied: str = Field(description="The job title/role being applied for")
+    job_id: str | None = Field(default=None, description="The job ID if present in the job description")
 
 
 _MCP_PARAMS = {"command": "npx", "args": ["cv-forge"]}
+
+_EXCEL_MCP_PARAMS = {"command": "npx", "args": ["@guillehr2/excel-mcp-server@latest"]}
+_XLSX_PATH = str(Path(__file__).parent / "job_apps.xlsx")
+_XLSX_SHEET = "Sheet 1"
 
 
 def _read_resume_text(resume_pdf_path: str | Path) -> str:
@@ -50,8 +56,8 @@ def _build_basic_user_profile(resume_text: str) -> dict:
 
     return {
         "personalInfo": {
-            "fullName": "Akash Hadagali Persett",
-            "email": "hadagalipersettiakash@gmail.com",
+            "fullName": os.getenv("FULL_NAME"),
+            "email": os.getenv("EMAIL"),
             "phone": "",
             "location": "",
             "linkedIn": "",
@@ -167,10 +173,12 @@ Output format (CRITICAL):
 Respond with valid JSON only, using exactly this shape:
 {{
   "cover_letter": "<full cover letter text>",
-  "company_name": "<company name from the job description>"
+  "company_name": "<company name from the job description>",
+  "role_applied": "<job title/role being applied for>",
+  "job_id": "<job ID if explicitly stated in the job description, otherwise null>"
 }}
 
-Do NOT include markdown, commentary, or any keys other than `cover_letter` and `company_name`.
+Do NOT include markdown, commentary, or any keys other than `cover_letter`, `company_name`, `role_applied`, and `job_id`.
 
 RESUME TEXT:
 {resume_text}
@@ -197,10 +205,83 @@ def _parse_cover_letter_json(raw_text: str) -> CoverLetter:
         data = json.loads(raw_text)
         cover_letter = str(data.get("cover_letter", "")) or raw_text
         company_name = str(data.get("company_name", "") or "")
+        role_applied = str(data.get("role_applied", "") or "")
+        job_id = data.get("job_id") or None
     except json.JSONDecodeError:
         cover_letter = raw_text
         company_name = ""
-    return CoverLetter(cover_letter=cover_letter, company_name=company_name)
+        role_applied = ""
+        job_id = None
+    return CoverLetter(cover_letter=cover_letter, company_name=company_name, role_applied=role_applied, job_id=job_id)
+
+
+async def log_application_to_xlsx(
+    company_name: str,
+    role_applied: str,
+    job_id: str | None,
+    link: str,
+) -> None:
+    """
+    Append a new job application row to job_apps.xlsx using the Excel MCP server.
+    Re-reads column A fresh each call so it works correctly even if the file changed.
+
+    Sheet layout:
+      Row 1  — "Table 1" title
+      Row 2  — column headers: (None, Company, Role, Job ID, Link, Accepted/Rejected)
+      Row 3+ — data rows numbered 1, 2, 3...
+
+    Columns written: A=#, B=Company, C=Role, D=Job ID, E=Link
+    Column F (Accepted/Rejected) is left blank.
+    """
+    import openpyxl
+    from copy import copy as _copy
+
+    wb = openpyxl.load_workbook(_XLSX_PATH)
+    ws = wb[_XLSX_SHEET]
+
+    # Scan column A to find the last sheet row that holds a positive integer.
+    # This avoids any hardcoded offset assumption about header/title rows.
+    last_sheet_row = 1
+    last_num = 0
+    for i, (val,) in enumerate(
+        ws.iter_rows(min_col=1, max_col=1, values_only=True), start=1
+    ):
+        if isinstance(val, (int, float)) and int(val) > 0:
+            last_sheet_row = i
+            last_num = int(val)
+
+    next_num = last_num + 1
+    next_sheet_row = last_sheet_row + 1
+
+    # Write the new row values
+    ws.cell(row=next_sheet_row, column=1).value = next_num
+    ws.cell(row=next_sheet_row, column=2).value = company_name or ""
+    ws.cell(row=next_sheet_row, column=3).value = role_applied or ""
+    ws.cell(row=next_sheet_row, column=4).value = job_id if job_id else None
+    ws.cell(row=next_sheet_row, column=5).value = link or ""
+
+    # Copy cell styles from the previous data row so formatting matches
+    src_cells = list(ws.iter_rows(
+        min_row=last_sheet_row, max_row=last_sheet_row, min_col=1, max_col=6
+    ))[0]
+    dst_cells = list(ws.iter_rows(
+        min_row=next_sheet_row, max_row=next_sheet_row, min_col=1, max_col=6
+    ))[0]
+    for src, dst in zip(src_cells, dst_cells):
+        if src.has_style:
+            dst.font = _copy(src.font)
+            dst.fill = _copy(src.fill)
+            dst.border = _copy(src.border)
+            dst.alignment = _copy(src.alignment)
+            dst.number_format = src.number_format
+
+    # Copy row height from the previous row
+    prev_dim = ws.row_dimensions.get(last_sheet_row)
+    if prev_dim and prev_dim.height:
+        ws.row_dimensions[next_sheet_row].height = prev_dim.height
+
+    wb.save(_XLSX_PATH)
+    wb.close()
 
 
 async def _generate_with_gpt(
@@ -306,6 +387,63 @@ async def generate_cover_letter(
         return await _generate_with_gemini(resume_text, job_description)
 
     raise ValueError(f"Unsupported model: {model}")
+
+
+def load_applications() -> tuple[list[list], list[str]]:
+    """
+    Load all job applications from job_apps.xlsx.
+
+    Returns:
+        table_rows: [[#, Company, Role, Job ID, Link, Status], ...]
+        dropdown_choices: ["1. Company — Role", ...]
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(_XLSX_PATH)
+    ws = wb[_XLSX_SHEET]
+    rows: list[list] = []
+    choices: list[str] = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        num = row[0]
+        if not isinstance(num, (int, float)) or int(num) <= 0:
+            continue
+        num = int(num)
+        company = str(row[1] or "")
+        role = str(row[2] or "")
+        job_id = str(row[3]) if row[3] is not None else ""
+        link_raw = str(row[4] or "")
+        link = f"[↗]({link_raw})" if link_raw else ""
+        status = str(row[5] or "")
+        rows.append([num, company, role, job_id, link, status])
+        choices.append(f"{num}. {company} — {role}")
+    wb.close()
+    return rows, choices
+
+
+def mark_application_status(row_num: int, status: str) -> str:
+    """
+    Set column F (Accepted/Rejected) for the row whose column A equals row_num.
+    status: "Accepted" → "✅"  |  "Rejected" → "❌"
+    Returns a human-readable result message.
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(_XLSX_PATH)
+    ws = wb[_XLSX_SHEET]
+    status_val = "✅" if status == "Accepted" else "❌"
+    updated = False
+    for i, (val,) in enumerate(
+        ws.iter_rows(min_col=1, max_col=1, values_only=True), start=1
+    ):
+        if isinstance(val, (int, float)) and int(val) == row_num:
+            ws.cell(row=i, column=6).value = status_val
+            updated = True
+            break
+    wb.save(_XLSX_PATH)
+    wb.close()
+    if updated:
+        return f"Marked **#{row_num}** as **{status}** {status_val}"
+    return f"Row **#{row_num}** not found."
 
 
 async def generate_cover_letter_text(
